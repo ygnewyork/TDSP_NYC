@@ -1,0 +1,320 @@
+---
+title: "TDSP"
+author: "Yash Gupta"
+date: "2025-01-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+setwd("C:/Users/ygisa/Downloads/TDSP")
+crashes <- read_csv("CrashNYC.csv")
+summary(crashes)
+
+crashes <- crashes[!is.na(crashes$'ZIP CODE'), ]
+crashes <- crashes %>% mutate(crash_datetime = paste(`CRASH DATE`, `CRASH TIME`))
+
+datetime_object <- parse_date_time(crashes$crash_datetime, "mdy HMS")
+
+crashes <- crashes %>% mutate(crash_datetime = datetime_object)
+weather <- read_csv("NYC.csv")
+
+weather$valid <- as.POSIXct(weather$valid, format="%Y-%m-%d %H:%M")
+
+weather$hour <- hour(weather$valid)
+
+weather$date <- date(weather$valid)
+
+wh <- crashes %>%
+  mutate(
+    date = date(crash_datetime),
+    time = hms(`CRASH TIME`),
+    hour = hour(`CRASH TIME`)
+  )
+
+combined_data <- inner_join(wh, weather, 
+                             by = c("date" = "date", 
+                                    "hour" = "hour"))
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+
+combined_data <- combined_data[!is.na(combined_data$'NUMBER OF PERSONS INJURED'), ]
+
+combined_data <- combined_data[!is.na(combined_data$'NUMBER OF PERSONS KILLED'), ]
+
+combined_data <- combined_data[!duplicated(combined_data$COLLISION_ID), ]
+
+
+sum((combined_data$`NUMBER OF PERSONS INJURED` > 0))
+
+sum((combined_data$`NUMBER OF PERSONS KILLED` > 0))
+
+inj_perc <- sum(combined_data$`NUMBER OF PERSONS INJURED` > 0) / nrow(combined_data) * 100
+
+rainy <- combined_data %>%
+  mutate(p01i_num = as.numeric(ifelse(p01i == "T", 0, p01i))) %>%
+  filter(p01i_num > 0.)
+
+snowy <- combined_data %>%
+  filter(str_detect(wxcodes, "SN"))
+
+windy <- combined_data %>%
+  mutate(wind = as.numeric(ifelse(sknt == "M", 0, sknt))) %>%
+  filter(wind > 25)
+
+cold <- combined_data %>%
+  filter(str_detect(wxcodes, "RA"))
+
+inj_perc_col <- sum(cold$`NUMBER OF PERSONS INJURED` > 0) / nrow(cold) * 100
+
+inj_perc_vsb <- sum(windy$`NUMBER OF PERSONS INJURED` > 0) / nrow(windy) * 100
+  
+inj_perc_snow <- sum(snowy$`NUMBER OF PERSONS INJURED` > 0) / nrow(snowy) * 100
+
+inj_perc_precip <- sum(rainy$`NUMBER OF PERSONS INJURED` > 0) / nrow(rainy) * 100
+
+inj_perc_precip - inj_perc
+
+hour_counts <- table(combined_data$hour)
+
+barplot(hour_counts,
+        names.arg = names(hour_counts), # Use hour numbers as labels
+        xlab = "Hour",
+        ylab = "Number of Rows",
+        main = "Number of Rows per Hour",
+        col = "skyblue")
+
+
+write_csv(combined_data, "crash.csv") 
+
+colnames(combined_data)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+
+```{r}
+
+combined_data %>%
+  group_by(wxcodes) %>%
+  summarise(crash_count = n()) %>%
+  arrange(desc(crash_count)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(wxcodes, crash_count), y = crash_count)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 10 Weather Conditions Associated with Crashes", x = "Weather Condition", y = "Crash Count")
+
+
+
+
+# Calculate average crashes per weather condition
+weather_avg_data <- combined_data %>%
+  group_by(wxcodes) %>%
+  summarise(avg_crash_count = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE)) %>%
+  arrange(desc(avg_crash_count)) %>%
+  head(10)
+
+# Create the plot
+ggplot(weather_avg_data, aes(x = reorder(wxcodes, avg_crash_count), y = avg_crash_count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Weather Conditions Associated with Average Crashes",
+    x = "Weather Condition",
+    y = "Average Crashes per Condition"
+  ) +
+  theme_minimal()
+
+
+combined_data <- combined_data %>%
+  mutate(tmpf = as.numeric(tmpf))
+
+combined_data <- combined_data %>%
+  filter(!is.na(tmpf))
+
+datad <- combined_data %>%
+  mutate(tmpf_binned = cut(tmpf, breaks = seq(0, 105, by = 5), right = FALSE))
+
+# Aggregate data by the binned temperature
+aggregated_data <- datad %>%
+  group_by(tmpf_binned) %>%
+  summarise(Total_Casualties = sum(`NUMBER OF PERSONS INJURED`), .groups = "drop")
+
+# Create the plot
+ggplot(aggregated_data, aes(x = tmpf_binned, y = Total_Casualties)) +
+  geom_point(alpha = 1) +
+  geom_line(group = 1, color = "orange") +
+  labs(
+    title = "Relationship between Temperature and Casualties (Binned by 5 Degrees)",
+    x = "Temperature (F, Binned by 5 Degrees)",
+    y = "Total Casualties"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+combined_datas <- combined_data %>%
+  mutate(tmpf = as.numeric(tmpf)) %>%
+  filter(!is.na(tmpf)) %>%
+  mutate(tmpf_binned = cut(tmpf, breaks = seq(-30, 105, by = 5), right = FALSE))
+
+# Aggregate data by binned temperature using average instead of sum
+aggregated_data <- combined_datas %>%
+  group_by(tmpf_binned) %>%
+  summarise(Average_Casualties = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE), 
+            .groups = "drop")
+
+# Create the plot
+ggplot(aggregated_data, aes(x = tmpf_binned, y = Average_Casualties)) +
+  geom_point(alpha = 1) +
+  geom_line(group = 1, color = "orange") +
+  labs(
+    title = "Average Casualties by Temperature Range",
+    x = "Temperature (F, Binned by 5 Degrees)",
+    y = "Average Casualties"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+
+# Compare injury/fatality rates during rain vs. non-rain
+rain_summary <- df %>%
+  group_by(is_rain) %>%
+  summarize(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    total_injuries = sum(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    injury_rate = (sum(`NUMBER OF PERSONS INJURED`, na.rm = TRUE)/n()),
+    avg_killed = mean(`NUMBER OF PERSONS KILLED`, na.rm = TRUE),
+    total_killed = sum(`NUMBER OF PERSONS KILLED`, na.rm = TRUE),
+    killed_rate = (sum(`NUMBER OF PERSONS KILLED`, na.rm = TRUE)/n()),
+    n = n()
+  )
+print(rain_summary)
+
+# Create individual plots
+p1 <- ggplot(rain_summary, aes(x = is_rain, y = avg_injuries)) +
+  geom_bar(stat = "identity", fill = "skyblue", alpha = 0.8) +
+  labs(title = "Average Injuries During Rain vs. No Rain", x = "Condition", y = "Average Injuries") +
+  theme_minimal()
+
+p1
+
+combined_data <- combined_data %>%
+  mutate(month = month(date),
+         season = case_when(
+           month %in% c(12, 1, 2) ~ "Winter",
+           month %in% c(3, 4, 5) ~ "Spring",
+           month %in% c(6, 7, 8) ~ "Summer",
+           month %in% c(9, 10, 11) ~ "Fall"
+         ))
+
+seasonal_crashes <- combined_data %>%
+  group_by(season) %>%
+  summarise(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    total_crashes = n()
+  ) %>%
+  ggplot(aes(x = season, y = avg_injuries)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Average Injuries by Season", x = "Season", y = "Average Injuries")
+
+seasonal_crashes
+
+
+combinedadb <- combined_data %>%
+  mutate(vsby_clean = as.numeric(gsub("[^0-9.]", "", vsby)))
+
+visibility_check <- combined_data %>%
+  mutate(vsby_numeric = suppressWarnings(as.numeric(vsby))) %>%
+  filter(!is.na(vsby_numeric))
+
+visibility_analysis <- visibility_check %>%
+  mutate(visibility_group = case_when(
+    vsby_numeric <= 1 ~ "Very Low (0-1 mile)",
+    vsby_numeric <= 3 ~ "Low (1-3 miles)",
+    vsby_numeric <= 5 ~ "Moderate (3-5 miles)",
+    vsby_numeric <= 10 ~ "Good (5-10 miles)",
+    TRUE ~ "Excellent (>10 miles)"
+  )) %>%
+  group_by(visibility_group) %>%
+  summarise(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    crash_count = n()
+  )
+
+ggplot(visibility_analysis, aes(x = reorder(visibility_group, avg_injuries), y = avg_injuries)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Average Injuries by Visibility Conditions",
+    x = "Visibility Range",
+    y = "Average Injuries per Crash"
+  ) +
+  theme_minimal()
+
+# Analyze crash severity by visibility conditions
+visibility_analysis <- combinedadb %>%
+  mutate(visibility_group = cut(as.numeric(vsby), 
+                              breaks = c(0, 1, 3, 5, 10, Inf),
+                              labels = c("Very Low", "Low", "Moderate", "Good", "Excellent"))) %>%
+  group_by(visibility_group) %>%
+  summarise(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    crash_count = n()
+  ) %>%
+  ggplot(aes(x = visibility_group, y = avg_injuries)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Injuries by Visibility Conditions",
+       x = "Visibility", y = "Average Injuries")
+
+
+# Analyze crashes by wind speed categories
+wind_analysis <- combined_data %>%
+  mutate(wind_category = cut(as.numeric(sknt), 
+                            breaks = c(0, 10, 20, 30, Inf),
+                            labels = c("Light", "Moderate", "Strong", "Severe"))) %>%
+  group_by(wind_category) %>%
+  summarise(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    total_crashes = n()
+  ) %>%
+  ggplot(aes(x = wind_category, y = avg_injuries)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  labs(title = "Average Injuries by Wind Speed Category",
+       x = "Wind Speed Category", y = "Average Injuries")
+
+hourly_weather_patterns <- combined_data %>%
+  group_by(hour, wxcodes) %>%
+  summarise(
+    avg_injuries = mean(`NUMBER OF PERSONS INJURED`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = hour, y = avg_injuries, color = wxcodes)) +
+  geom_line() +
+  facet_wrap(~wxcodes) +
+  theme_minimal() +
+  labs(title = "Hourly Crash Patterns by Weather Condition",
+       x = "Hour of Day", y = "Average Injuries")
+
+hourly_weather_patterns
+```
