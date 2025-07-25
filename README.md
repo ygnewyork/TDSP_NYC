@@ -1,0 +1,1 @@
+This project demonstrates the practical application of R programming and statistical analysis techniques to urban safety challenges, providing data-driven insights for improving road safety during adverse weather conditions.
